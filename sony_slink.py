@@ -1,12 +1,11 @@
 """ Support for Sony receivers with Control A1 input.
-
 """
-
+import collections
 import logging
+import serial
 import string
 import time
-
-import voluptuous as vol
+import voluptuous
 
 from homeassistant.components.media_player import (
     PLATFORM_SCHEMA, SUPPORT_SELECT_SOURCE,
@@ -29,7 +28,7 @@ SUPPORT_SONY_CONTROL_A1 = SUPPORT_VOLUME_MUTE | SUPPORT_VOLUME_STEP | SUPPORT_VO
     SUPPORT_TURN_ON | SUPPORT_TURN_OFF | SUPPORT_SELECT_SOURCE
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
-    vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
+    voluptuous.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
 })
 
 COMMAND_STATUS_SOURCE = 'c00f'
@@ -42,6 +41,12 @@ COMMAND_VOLUME_DOWN = 'c015'
 COMMAND_POWER_ON = 'c02e'
 COMMAND_POWER_OFF = 'c02f'
 COMMAND_SELECT_SOURCE = 'c050'
+COMMAND_QUERY_INPUT_MODE = 'c043'
+COMMAND_INPUT_MODE_AUTO = 'c08300'
+COMMAND_INPUT_MODE_OPTICAL = 'c08301'
+COMMAND_INPUT_MODE_COAXIAL = 'c08302'
+COMMAND_INPUT_MODE_ANALOG = 'c08304'
+
 
 VOLUME_STEPS = 20
 
@@ -53,6 +58,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
     if sony.update():
         add_devices([sony])
 
+Source = collections.namedtuple("Source", "id input_mode name")
 
 class SonyDevice(MediaPlayerDevice):
     """Representation of a Sony device."""
@@ -62,8 +68,9 @@ class SonyDevice(MediaPlayerDevice):
         self._name = name
 
         self._power_state = STATE_UNKNOWN
-        self._available_inputs = {}
-        self._active_input = None
+        self._available_sources = []
+        self._active_source = None
+        self._input_mode = None
         self._muted = False
 
         self._arduino = None
@@ -72,7 +79,6 @@ class SonyDevice(MediaPlayerDevice):
     def _check_arduino_connection(self):
         if self._arduino is None:
             try:
-                import serial
                 self._arduino = serial.Serial('/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0', 115200,
                                               timeout=0.5)
                 _LOGGER.info("Connected to arduino")
@@ -89,7 +95,7 @@ class SonyDevice(MediaPlayerDevice):
     def _send_sony_command(self, command, expect_response=True):
         if not self._check_arduino_connection():
             return  # Print error..
-        _LOGGER.info("Sending command '%s'" % command)
+        _LOGGER.debug("Sending command '%s'" % command)
         self._arduino.write((command + '\n').encode())
         if expect_response:
             self._read_sony_response()
@@ -106,7 +112,7 @@ class SonyDevice(MediaPlayerDevice):
             response = self._response_buffer[:line_break_pos]
             self._response_buffer = self._response_buffer[line_break_pos + 1:]
 
-            _LOGGER.info("Handling '%s'", response)
+            _LOGGER.debug("Handling '%s'", response)
 
             if not all(c in string.hexdigits for c in response.decode()):
                 continue
@@ -124,10 +130,12 @@ class SonyDevice(MediaPlayerDevice):
                     self._power_state = (
                         STATE_ON if response_bytes[4] & 0x1 else STATE_OFF)
                     self._muted = response_bytes[4] & 0x02 != 0
-                    active_input_index = response_bytes[2]
-                    for (name, index) in self._available_inputs.items():
-                        if index == active_input_index:
-                            self._active_input = name
+                    active_source_id = response_bytes[2]
+                    for source in self._available_sources:
+                        if source.id == active_source_id and (
+                                source.input_mode is None or
+                                source.input_mode == self._input_mode):
+                            self._active_source = source
             elif response_bytes[:2] == [0xc8, 0x6a]:
                 # c8 6a 53 54 52 2d 44 45 36 33 35 20 00 00 00 00
                 #        S  T  R  -  D  E  6  3  5
@@ -138,21 +146,52 @@ class SonyDevice(MediaPlayerDevice):
             elif response_bytes[:2] == [0xc8, 0x48]:
                 # c8 48 00 20 54 55 4e 45 52 20 20 00 00 00 00 00
                 #              T  U  N  E  R
+                def add_or_update_source(source_id, source_name,
+                                         input_mode=None):
+                    for source in self._available_sources:
+                        if source.id == source_id and source.input_mode == input_mode:
+                            source.name = source_name
+                            return
+                    self._available_sources.append(Source(
+                            id=source_id, input_mode=input_mode, name=source_name))
+
                 if len(response_bytes) == 16:
-                    input_index = response_bytes[2]
-                    input_name = self._parse_sony_string(response_bytes[3:])
-                    self._available_inputs[input_name] = input_index
+                    source_id = response_bytes[2]
+                    source_name = self._parse_sony_string(response_bytes[3:])
+
+                    if self._name == "STR-DE635" and source_id == 0x19:
+                        add_or_update_source(
+                            source_id, source_name, "auto")
+                        for input_mode in ["analog", "coaxial", "optical"]:
+                            add_or_update_source(
+                                source_id, source_name + " | " + input_mode,
+                                input_mode)
+                    else:
+                        add_or_update_source(source_id, source_name)
+            elif response_bytes[:2] == [0xc8, 0x43]:
+                # c8 43 00 03
+                if len(response_bytes) == 4:
+                    input_modes = {0x0: "auto", 0x1: "optical",
+                                   0x2: "coaxial", 0x4: "analog"}
+                    self._input_mode = input_modes[response_bytes[2]]
+                    _LOGGER.debug('input mode is set to %s' % self._input_mode)
             else:
-                _LOGGER.info('Unhandled command "%s"', response)
+                _LOGGER.info('Unhandled response "%s"', response)
 
     def update(self):
         """Get the latest details from the device."""
 
-        if not self._available_inputs:
+        if not self._available_sources:
             self._send_sony_command(COMMAND_DEVICE_NAME)
-            for id in range(20):  # yes, decimal values
+            if self._name == "STR-DE635":
+                # Speed up initialization and avoid duplicated sources
+                source_ids_to_scan = [0, 1, 2, 4, 10, 11, 16, 19]
+            else:
+                source_ids_to_scan = range(20)  # yes, decimal values
+            for id in source_ids_to_scan:
                 self._send_sony_command(COMMAND_SOURCE_NAME + "%.2d" % id)
 
+        self._send_sony_command(COMMAND_QUERY_INPUT_MODE)
         self._send_sony_command(COMMAND_STATUS_SOURCE)
         return True
 
@@ -174,12 +213,12 @@ class SonyDevice(MediaPlayerDevice):
     @property
     def source_list(self):
         """Return the list of available input sources."""
-        return sorted(list(self._available_inputs.keys()))
+        return sorted([s.name for s in self._available_sources])
 
     @property
     def media_title(self):
         """Return the current media info."""
-        return self._active_input or ""
+        return self._active_source.name if self._active_source else ""
 
     @property
     def supported_features(self):
@@ -189,7 +228,7 @@ class SonyDevice(MediaPlayerDevice):
     @property
     def source(self):
         """Return the current input source."""
-        return self._active_input or ""
+        return self._active_source.name if self._active_source else ""
 
     def turn_on(self):
         """Turn the media player on."""
@@ -216,8 +255,17 @@ class SonyDevice(MediaPlayerDevice):
         else:
             self._send_sony_command(COMMAND_UNMUTE)
 
-    def select_source(self, source):
+    def select_source(self, source_name):
         """Select input source."""
-        for (name, index) in self._available_inputs.items():
-            if name == source:
-                self._send_sony_command(COMMAND_SELECT_SOURCE + "%.2x" % index)
+        for source in self._available_sources:
+            if source.name == source_name:
+                self._send_sony_command(COMMAND_SELECT_SOURCE + "%.2x" % source.id)
+                if source.input_mode == "auto":
+                    self._send_sony_command(COMMAND_INPUT_MODE_AUTO)
+                elif source.input_mode == "analog":
+                    self._send_sony_command(COMMAND_INPUT_MODE_ANALOG)
+                elif source.input_mode == "coaxial":
+                    self._send_sony_command(COMMAND_INPUT_MODE_COAXIAL)
+                elif source.input_mode == "optical":
+                    self._send_sony_command(COMMAND_INPUT_MODE_OPTICAL)
+                break
