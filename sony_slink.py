@@ -4,6 +4,7 @@ import collections
 import logging
 import serial
 import string
+import threading
 import time
 import voluptuous
 
@@ -73,6 +74,7 @@ class SonyDevice(MediaPlayerDevice):
         self._input_mode = None
         self._muted = False
 
+        self._lock = threading.Lock()
         self._arduino = None
         self._response_buffer = bytes()
 
@@ -180,45 +182,51 @@ class SonyDevice(MediaPlayerDevice):
 
     def update(self):
         """Get the latest details from the device."""
+        with self._lock:
+            if not self._available_sources:
+                self._send_sony_command(COMMAND_DEVICE_NAME)
+                if self._name == "STR-DE635":
+                    # Speed up initialization and avoid duplicated sources
+                    source_ids_to_scan = [0, 1, 2, 4, 10, 11, 16, 19]
+                else:
+                    source_ids_to_scan = range(20)  # yes, decimal values
 
-        if not self._available_sources:
-            self._send_sony_command(COMMAND_DEVICE_NAME)
-            if self._name == "STR-DE635":
-                # Speed up initialization and avoid duplicated sources
-                source_ids_to_scan = [0, 1, 2, 4, 10, 11, 16, 19]
-            else:
-                source_ids_to_scan = range(20)  # yes, decimal values
-            for id in source_ids_to_scan:
-                self._send_sony_command(COMMAND_SOURCE_NAME + "%.2d" % id)
+                for id in source_ids_to_scan:
+                    self._send_sony_command(COMMAND_SOURCE_NAME + "%.2d" % id)
 
-        self._send_sony_command(COMMAND_QUERY_INPUT_MODE)
-        self._send_sony_command(COMMAND_STATUS_SOURCE)
-        return True
+            self._send_sony_command(COMMAND_QUERY_INPUT_MODE)
+            self._send_sony_command(COMMAND_STATUS_SOURCE)
+            return True
 
     @property
     def name(self):
         """Return the name of the device."""
-        return self._name
+        with self._lock:
+            return self._name
 
     @property
     def state(self):
         """Return the state of the device."""
-        return self._power_state
+        with self._lock:
+            return self._power_state
 
     @property
     def is_volume_muted(self):
         """Return boolean if volume is currently muted."""
-        return self._muted
+        with self._lock:
+            return self._muted
 
     @property
     def source_list(self):
         """Return the list of available input sources."""
-        return sorted([s.name for s in self._available_sources])
+        with self._lock:
+            return sorted([s.name for s in self._available_sources])
 
     @property
     def media_title(self):
         """Return the current media info."""
-        return self._active_source.name if self._active_source else ""
+        with self._lock:
+            return self._active_source.name if self._active_source else ""
 
     @property
     def supported_features(self):
@@ -228,44 +236,54 @@ class SonyDevice(MediaPlayerDevice):
     @property
     def source(self):
         """Return the current input source."""
-        return self._active_source.name if self._active_source else ""
+        with self._lock:
+            return self._active_source.name if self._active_source else ""
 
     def turn_on(self):
         """Turn the media player on."""
-        self._send_sony_command(COMMAND_POWER_ON)
+        with self._lock:
+            self._send_sony_command(COMMAND_POWER_ON)
 
     def turn_off(self):
         """Turn off media player."""
-        self._send_sony_command(COMMAND_POWER_OFF)
+        with self._lock:
+            self._send_sony_command(COMMAND_POWER_OFF)
 
     def volume_up(self):
         """Volume up media player."""
-        for _ in range(VOLUME_STEPS):
-            self._send_sony_command(COMMAND_VOLUME_UP, expect_response=False)
+        with self._lock:
+            for _ in range(VOLUME_STEPS):
+                self._send_sony_command(COMMAND_VOLUME_UP,
+                                        expect_response=False)
 
     def volume_down(self):
         """Volume down media player."""
-        for _ in range(VOLUME_STEPS):
-            self._send_sony_command(COMMAND_VOLUME_DOWN, expect_response=False)
+        with self._lock:
+            for _ in range(VOLUME_STEPS):
+                self._send_sony_command(COMMAND_VOLUME_DOWN,
+                                        expect_response=False)
 
     def mute_volume(self, mute):
         """Mute or unmute media player."""
-        if mute:
-            self._send_sony_command(COMMAND_MUTE)
-        else:
-            self._send_sony_command(COMMAND_UNMUTE)
+        with self._lock:
+            if mute:
+                self._send_sony_command(COMMAND_MUTE)
+            else:
+                self._send_sony_command(COMMAND_UNMUTE)
 
     def select_source(self, source_name):
         """Select input source."""
-        for source in self._available_sources:
-            if source.name == source_name:
-                self._send_sony_command(COMMAND_SELECT_SOURCE + "%.2x" % source.id)
-                if source.input_mode == "auto":
-                    self._send_sony_command(COMMAND_INPUT_MODE_AUTO)
-                elif source.input_mode == "analog":
-                    self._send_sony_command(COMMAND_INPUT_MODE_ANALOG)
-                elif source.input_mode == "coaxial":
-                    self._send_sony_command(COMMAND_INPUT_MODE_COAXIAL)
-                elif source.input_mode == "optical":
-                    self._send_sony_command(COMMAND_INPUT_MODE_OPTICAL)
-                break
+        with self._lock:
+            for source in self._available_sources:
+                if source.name == source_name:
+                    self._send_sony_command(
+                        COMMAND_SELECT_SOURCE + "%.2x" % source.id)
+                    if source.input_mode == "auto":
+                        self._send_sony_command(COMMAND_INPUT_MODE_AUTO)
+                    elif source.input_mode == "analog":
+                        self._send_sony_command(COMMAND_INPUT_MODE_ANALOG)
+                    elif source.input_mode == "coaxial":
+                        self._send_sony_command(COMMAND_INPUT_MODE_COAXIAL)
+                    elif source.input_mode == "optical":
+                        self._send_sony_command(COMMAND_INPUT_MODE_OPTICAL)
+                        break
