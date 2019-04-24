@@ -51,10 +51,10 @@ COMMAND_POWER_ON = 'c02e'
 COMMAND_POWER_OFF = 'c02f'
 COMMAND_SELECT_SOURCE = 'c050'
 COMMAND_QUERY_INPUT_MODE = 'c043'
-COMMAND_INPUT_MODE_AUTO = 'c08300'
-COMMAND_INPUT_MODE_OPTICAL = 'c08301'
-COMMAND_INPUT_MODE_COAXIAL = 'c08302'
-COMMAND_INPUT_MODE_ANALOG = 'c08304'
+COMMAND_INPUT_MODE = 'c083'
+
+INPUT_MODES = {0x0: "auto", 0x1: "optical",
+               0x2: "coaxial", 0x4: "analog"}
 
 VOLUME_STEPS = 20
 
@@ -185,10 +185,7 @@ class SonyDevice(MediaPlayerDevice):
             elif response_bytes[:2] == [0xc8, 0x43]:
                 # c8 43 00 03
                 if len(response_bytes) == 4:
-                    input_modes = {0x0: "auto", 0x1: "optical",
-                                   0x2: "coaxial", 0x4: "analog"}
-                    self._input_mode = input_modes[response_bytes[2]]
-                    _LOGGER.debug('input mode is set to %s' % self._input_mode)
+                    self._input_mode = INPUT_MODES[response_bytes[2]]
             else:
                 _LOGGER.info('Unhandled response "%s"', response)
 
@@ -303,12 +300,9 @@ class SonyDevice(MediaPlayerDevice):
                 if source.name == source_name:
                     self._send_sony_command(
                         COMMAND_SELECT_SOURCE + "%.2x" % source.id)
-                    if source.input_mode == "auto":
-                        self._send_sony_command(COMMAND_INPUT_MODE_AUTO)
-                    elif source.input_mode == "analog":
-                        self._send_sony_command(COMMAND_INPUT_MODE_ANALOG)
-                    elif source.input_mode == "coaxial":
-                        self._send_sony_command(COMMAND_INPUT_MODE_COAXIAL)
-                    elif source.input_mode == "optical":
-                        self._send_sony_command(COMMAND_INPUT_MODE_OPTICAL)
+                    for input_mode_id, input_mode in INPUT_MODES.items():
+                        if source.input_mode == input_mode:
+                            self._send_sony_command(
+                                COMMAND_INPUT_MODE + "%.2x" % input_mode_id)
+                            break
                     break
