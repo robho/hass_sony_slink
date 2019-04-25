@@ -95,7 +95,7 @@ class SonyDevice(MediaPlayerDevice):
         if self._arduino is None:
             try:
                 self._arduino = serial.Serial(self._serial_port,
-                                              self._baud_rate, timeout=0.5)
+                                              self._baud_rate, timeout=0.1)
                 _LOGGER.info("Connected to arduino")
             except OSError:
                 _LOGGER.info("Failed to connect to arduino")
@@ -124,7 +124,12 @@ class SonyDevice(MediaPlayerDevice):
         return bytes(data).decode('iso-8859-1').rstrip('\0').strip()
 
     def _read_sony_response(self):
-        self._response_buffer += self._arduino.read(1000)
+        while True:
+            input = self._arduino.read()
+            if len(input) == 0:
+                break
+            self._response_buffer += input
+
         while True:
             line_break_pos = self._response_buffer.find(b'\n')
             if line_break_pos == -1:
