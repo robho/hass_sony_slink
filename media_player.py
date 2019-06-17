@@ -1,4 +1,4 @@
-""" Support for Sony receivers with Control A1 input.
+""" Support for Sony receivers with S-Link/Control-A1 input.
 """
 import collections
 import logging
@@ -17,11 +17,9 @@ from homeassistant.const import (
     CONF_NAME, STATE_OFF, STATE_ON, STATE_UNKNOWN)
 import homeassistant.helpers.config_validation as cv
 
-REQUIREMENTS = ['pyserial==3.4']
-
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "sony_control_a1"
+DOMAIN = "sony_slink"
 
 CONF_SERIAL_PORT = 'serial_port'
 CONF_BAUD_RATE = 'baud_rate'

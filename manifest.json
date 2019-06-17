@@ -1,0 +1,8 @@
+{
+  "domain": "sony_slink",
+  "name": "Sony S-Link/Control-A1",
+  "documentation": "https://github.com/robho/sony_slink",
+  "dependencies": [],
+  "codeowners": [],
+  "requirements": ['pyserial==3.4']
+}
