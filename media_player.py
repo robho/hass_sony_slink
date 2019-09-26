@@ -205,9 +205,12 @@ class SonyDevice(MediaPlayerDevice):
         with self._lock:
             if not self._available_sources:
                 self._send_sony_command(COMMAND_DEVICE_NAME)
+                # Device specific configuration to speed up
+                # initialization and avoid duplicate sources
                 if self._device_name == "STR-DE635":
-                    # Speed up initialization and avoid duplicated sources
                     source_ids_to_scan = [0, 1, 2, 4, 10, 11, 16, 19]
+                elif self._device_name == "STR-DB2000":
+                    source_ids_to_scan = [0, 1, 2, 4, 5, 10, 11, 12, 16, 19]
                 else:
                     source_ids_to_scan = range(20)  # yes, decimal values
 
