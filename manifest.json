@@ -4,5 +4,5 @@
   "documentation": "https://github.com/robho/sony_slink",
   "dependencies": [],
   "codeowners": [],
-  "requirements": ['pyserial==3.4']
+  "requirements": ["pyserial==3.4"]
 }
