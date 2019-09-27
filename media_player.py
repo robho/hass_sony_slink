@@ -38,18 +38,21 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     voluptuous.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
 })
 
-COMMAND_STATUS_SOURCE = 'c00f'
-COMMAND_DEVICE_NAME = 'c06a'
-COMMAND_SOURCE_NAME = 'c048'
-COMMAND_MUTE = 'c006'
-COMMAND_UNMUTE = 'c007'
-COMMAND_VOLUME_UP = 'c014'
-COMMAND_VOLUME_DOWN = 'c015'
-COMMAND_POWER_ON = 'c02e'
-COMMAND_POWER_OFF = 'c02f'
-COMMAND_SELECT_SOURCE = 'c050'
-COMMAND_QUERY_INPUT_MODE = 'c043'
-COMMAND_INPUT_MODE = 'c083'
+COMMAND_PREFIX_AMP = 'c0'
+COMMAND_PREFIX_NEW_AMP = '70'
+
+COMMAND_STATUS_SOURCE = '0f'
+COMMAND_DEVICE_NAME = '6a'
+COMMAND_SOURCE_NAME = '48'
+COMMAND_MUTE = '06'
+COMMAND_UNMUTE = '07'
+COMMAND_VOLUME_UP = '14'
+COMMAND_VOLUME_DOWN = '15'
+COMMAND_POWER_ON = '2e'
+COMMAND_POWER_OFF = '2f'
+COMMAND_SELECT_SOURCE = '50'
+COMMAND_QUERY_INPUT_MODE = '43'
+COMMAND_INPUT_MODE = '83'
 
 INPUT_MODES = {0x0: "auto", 0x1: "optical",
                0x2: "coaxial", 0x4: "analog"}
@@ -79,6 +82,7 @@ class SonyDevice(MediaPlayerDevice):
         self._name = name
 
         self._device_name = None
+        self._device_command_prefix = COMMAND_PREFIX_AMP
         self._power_state = STATE_UNKNOWN
         self._available_sources = []
         self._active_source_id = None
@@ -113,8 +117,9 @@ class SonyDevice(MediaPlayerDevice):
     def _send_sony_command(self, command, expect_response=True):
         if not self._check_arduino_connection():
             return  # Print error..
-        _LOGGER.debug("Sending command '%s'" % command)
-        self._arduino.write((command + '\n').encode())
+        _LOGGER.debug("Sending command '%s%s'" % (
+            self._device_command_prefix, command))
+        self._arduino.write((self._device_command_prefix + command + '\n').encode())
         if expect_response:
             self._read_sony_response()
 
@@ -142,11 +147,8 @@ class SonyDevice(MediaPlayerDevice):
 
             response_bytes = [int(response[x:x+2], 16) for x in range(
                 0, len(response), 2)]
-            #response_bytes = [int(x, 16) for x in response.split()]
-            #response_bytes = bytes.fromhex(response)
 
-#            if response_bytes.startswith(bytes([0xc8, 0x70])):
-            if response_bytes[:2] == [0xc8, 0x70]:
+            if response_bytes[0] in [0xc8, 0x78] and response_bytes[1] == 0x70:
                 # Source status
                 # c8 70 16 16 31 ff
                 if len(response_bytes) == 6:
@@ -154,13 +156,13 @@ class SonyDevice(MediaPlayerDevice):
                         STATE_ON if response_bytes[4] & 0x1 else STATE_OFF)
                     self._muted = response_bytes[4] & 0x02 != 0
                     self._active_source_id = response_bytes[2]
-            elif response_bytes[:2] == [0xc8, 0x6a]:
+            elif response_bytes[0] in [0xc8, 0x78] and response_bytes[1] == 0x6a:
                 # c8 6a 53 54 52 2d 44 45 36 33 35 20 00 00 00 00
                 #        S  T  R  -  D  E  6  3  5
                 if len(response_bytes) == 16:
                     self._device_name = self._parse_sony_string(
                         response_bytes[2:])
-            elif response_bytes[:2] == [0xc8, 0x48]:
+            elif response_bytes[0] in [0xc8, 0x78] and response_bytes[1] == 0x48:
                 # c8 48 00 20 54 55 4e 45 52 20 20 00 00 00 00 00
                 #              T  U  N  E  R
                 def add_or_update_source(source_id, source_name,
@@ -185,7 +187,7 @@ class SonyDevice(MediaPlayerDevice):
                                 input_mode)
                     else:
                         add_or_update_source(source_id, source_name)
-            elif response_bytes[:2] == [0xc8, 0x43]:
+            elif response_bytes[0] in [0xc8, 0x78] and response_bytes[1] == 0x43:
                 # c8 43 00 03
                 if len(response_bytes) == 4:
                     self._input_mode = INPUT_MODES[response_bytes[2]]
@@ -205,6 +207,13 @@ class SonyDevice(MediaPlayerDevice):
         with self._lock:
             if not self._available_sources:
                 self._send_sony_command(COMMAND_DEVICE_NAME)
+                if self._device_name is None:
+                    self._device_command_prefix = COMMAND_PREFIX_NEW_AMP
+                    self._send_sony_command(COMMAND_DEVICE_NAME)
+                    if self._device_name is None:
+                        _LOGGER.error("No device is responding to name queries")
+                        return false
+
                 # Device specific configuration to speed up
                 # initialization and avoid duplicate sources
                 if self._device_name == "STR-DE635":
