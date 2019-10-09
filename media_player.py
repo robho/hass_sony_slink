@@ -212,12 +212,14 @@ class SonyDevice(MediaPlayerDevice):
                     self._send_sony_command(COMMAND_DEVICE_NAME)
                     if self._device_name is None:
                         _LOGGER.error("No device is responding to name queries")
-                        return false
+                        return False
 
                 # Device specific configuration to speed up
                 # initialization and avoid duplicate sources
                 if self._device_name == "STR-DE635":
                     source_ids_to_scan = [0, 1, 2, 4, 10, 11, 16, 19]
+                elif self._device_name == "STR-DB840":
+                    source_ids_to_scan = [0, 1, 2, 4, 10, 11, 12, 16, 19]
                 elif self._device_name == "STR-DB2000":
                     source_ids_to_scan = [0, 1, 2, 4, 5, 10, 11, 12, 16, 19]
                 else:
