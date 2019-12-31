@@ -57,7 +57,8 @@ COMMAND_INPUT_MODE = '83'
 INPUT_MODES = {0x0: "auto", 0x1: "optical",
                0x2: "coaxial", 0x4: "analog"}
 
-VOLUME_STEPS = 20
+VOLUME_REPEAT_DELAY_S = 0.1
+VOLUME_STEPS = 2
 
 Source = collections.namedtuple("Source", "id input_mode name")
 
@@ -294,6 +295,7 @@ class SonyDevice(MediaPlayerDevice):
             for _ in range(VOLUME_STEPS):
                 self._send_sony_command(COMMAND_VOLUME_UP,
                                         expect_response=False)
+                time.sleep(VOLUME_REPEAT_DELAY_S)
 
     def volume_down(self):
         """Volume down media player."""
@@ -301,6 +303,7 @@ class SonyDevice(MediaPlayerDevice):
             for _ in range(VOLUME_STEPS):
                 self._send_sony_command(COMMAND_VOLUME_DOWN,
                                         expect_response=False)
+                time.sleep(VOLUME_REPEAT_DELAY_S)
 
     def mute_volume(self, mute):
         """Mute or unmute media player."""
